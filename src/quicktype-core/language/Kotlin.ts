@@ -40,14 +40,20 @@ import { RenderContext } from "../Renderer";
 export enum Framework {
     None,
     Jackson,
-    Klaxon
+    Klaxon,
+    Kotlinx
 }
 
 export const kotlinOptions = {
     framework: new EnumOption(
         "framework",
         "Serialization framework",
-        [["just-types", Framework.None], ["jackson", Framework.Jackson], ["klaxon", Framework.Klaxon]],
+        [
+          ["just-types", Framework.None],
+          ["jackson", Framework.Jackson],
+          ["klaxon", Framework.Klaxon],
+          ["kotlinx", Framework.Kotlinx]
+        ],
         "klaxon"
     ),
     packageName: new StringOption("package", "Package", "PACKAGE", "quicktype")
@@ -83,6 +89,8 @@ export class KotlinTargetLanguage extends TargetLanguage {
                 return new KotlinJacksonRenderer(this, renderContext, options);
             case Framework.Klaxon:
                 return new KotlinKlaxonRenderer(this, renderContext, options);
+            case Framework.Kotlinx:
+                return new KotlinKotlinxRenderer(this, renderContext, options);
             default:
                 return assertNever(options.framework);
         }
@@ -293,7 +301,7 @@ export class KotlinRenderer extends ConvenienceRenderer {
         this.emitLine("class ", className, "()");
     }
 
-    private emitClassDefinition(c: ClassType, className: Name): void {
+    protected emitClassDefinition(c: ClassType, className: Name): void {
         if (c.getProperties().size === 0) {
             this.emitEmptyClassDefinition(c, className);
             return;
@@ -308,7 +316,7 @@ export class KotlinRenderer extends ConvenienceRenderer {
         };
 
         this.emitDescription(this.descriptionForType(c));
-        this.emitLine("data class ", className, " (");
+        this.emitClassDeclaration(className);
         this.indent(() => {
             let count = c.getProperties().size;
             let first = true;
@@ -333,7 +341,7 @@ export class KotlinRenderer extends ConvenienceRenderer {
                     emit();
                 }
 
-                this.emitLine("val ", name, ": ", kotlinType(p), nullableOrOptional ? " = null" : "", last ? "" : ",");
+                this.emitClassVal(p, kotlinType, name, jsonName, nullableOrOptional, last);
 
                 if (meta.length > 0 && !last) {
                     this.ensureBlankLine();
@@ -344,6 +352,20 @@ export class KotlinRenderer extends ConvenienceRenderer {
         });
 
         this.emitClassDefinitionMethods(c, className);
+    }
+
+    protected emitClassDeclaration(className: Name): void {
+        this.emitLine("data class ", className, " (");
+    }
+
+    protected emitClassVal(
+      p: ClassProperty,
+      kotlinType: (p: ClassProperty) => Sourcelike,
+      name: Name,
+      _jsonName: string,
+      nullableOrOptional: boolean,
+      last: boolean): void {
+                this.emitLine("val ", name, ": ", kotlinType(p), nullableOrOptional ? " = null" : "", last ? "" : ",");
     }
 
     protected emitClassDefinitionMethods(_c: ClassType, _className: Name) {
@@ -964,3 +986,47 @@ private fun <T> ObjectMapper.convert(k: kotlin.reflect.KClass<*>, fromJson: (Jso
         });
     }
 }
+
+export class KotlinKotlinxRenderer extends KotlinRenderer {
+    constructor(
+        targetLanguage: TargetLanguage,
+        renderContext: RenderContext,
+        _kotlinOptions: OptionValues<typeof kotlinOptions>
+    ) {
+        super(targetLanguage, renderContext, _kotlinOptions);
+    }
+
+    protected emitHeader(): void {
+        super.emitHeader();
+
+        this.emitLine("import kotlinx.serialization.Serializable");
+        this.emitLine("import kotlinx.serialization.Optional");
+        this.emitLine("import kotlinx.serialization.SerialName");
+    }
+
+    protected emitEmptyClassDefinition(c: ClassType, className: Name): void {
+        this.emitDescription(this.descriptionForType(c));
+
+        this.emitLine("@Serializable");
+        this.emitLine("class ", className, "()");
+    }
+
+    protected emitClassDeclaration(className: Name): void {
+        this.emitLine("@Serializable");
+        super.emitClassDeclaration(className);
+    }
+
+    protected emitClassVal(
+        p: ClassProperty,
+        kotlinType: (p: ClassProperty) => Sourcelike,
+        name: Name,
+        jsonName: string,
+        nullableOrOptional: boolean,
+        last: boolean): void {
+      if (p.isOptional) {
+        this.emitLine("@Optional");
+      }
+      this.emitLine("@SerialName(\"", jsonName, "\")");
+      super.emitClassVal(p, kotlinType, name, jsonName, nullableOrOptional, last);
+    }
+  }
